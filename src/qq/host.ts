@@ -86,6 +86,7 @@ export class NativeHost {
       externalVersion: false,
     }
     this.login.initConfig(settings)
+    this.login.setRemerberPwd(true)
     this.login.connect()
     await bounded(this.connected.promise, this.signal, this.config.timeout)
     await delay(3000, undefined, { signal: this.signal })
@@ -151,10 +152,9 @@ export class NativeHost {
         if (parsed.success) this.authenticated.resolve(parsed.data)
         else this.authenticated.reject(parsed.error)
       },
-      onQRCodeSessionFailed: (type: number, code: number) => {
+      onQRCodeSessionFailed: () => {
         if (this.closed || this.signal.aborted) return
-        if (type === 1 && code === 3) this.login.getQRCodePicture()
-        else this.authenticated.reject(new Error('QQ QR login failed'))
+        this.login.getQRCodePicture()
       },
       onLoginFailed: () => {
         this.authenticated.reject(new Error('QQ login failed'))
@@ -196,12 +196,13 @@ export class NativeHost {
       if (!result.loginErrorInfo.errMsg) {
         return identity.parse({ ...target, nick: target.nickName })
       }
-      this.logger.warn('QQ quick login failed; requesting QR login')
+      const reason = result.loginErrorInfo.errMsg
+      this.logger.warn({ reason }, 'QQ quick login failed; requesting QR login')
     }
 
     this.signal.throwIfAborted()
     this.login.getQRCodePicture()
-    const self = await bounded(this.authenticated.promise, this.signal, 300_000)
+    const self = await bounded(this.authenticated.promise, this.signal)
     if (this.config.account && self.uin !== this.config.account) {
       throw new Fault('input', 'Scanned account differs from SAURY_ACCOUNT')
     }

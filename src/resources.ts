@@ -10,6 +10,8 @@ import type { Config } from './config.js'
 import { Fault } from './core/model.js'
 import type { Assets, Resources } from './core/model.js'
 
+const mediaProtocols = new Set(['http:', 'https:', 'data:'])
+
 type Asset = Readonly<{
   path: string
   size: number
@@ -119,9 +121,11 @@ export class ResourceStore implements Resources, Assets {
     signal.throwIfAborted()
     if (source.startsWith('asset:')) return this.acquire(source.slice(6))
     const url = URL.parse(source)
-    const allowed = url?.protocol === 'https:' || url?.protocol === 'http:'
-    if (!url || !allowed || url.username || url.password) {
-      throw new Fault('input', 'Expected an HTTP media URL or uploaded asset')
+    if (!url || !mediaProtocols.has(url.protocol)) {
+      throw new Fault('input', 'Unsupported media URL')
+    }
+    if (url.username || url.password) {
+      throw new Fault('input', 'Media URLs must not contain credentials')
     }
 
     const download = () => this.download(url, signal)

@@ -3,12 +3,11 @@ import { Fault } from './model.js'
 export async function bounded<T>(
   operation: Promise<T>,
   signal: AbortSignal,
-  milliseconds: number,
+  milliseconds?: number,
 ): Promise<T> {
   const stopped = Promise.withResolvers<never>()
-  const timer = setTimeout(() => {
-    const error = new Fault('timeout', 'Operation timed out')
-    stopped.reject(error)
+  const timer = milliseconds === undefined ? undefined : setTimeout(() => {
+    stopped.reject(new Fault('timeout', 'Operation timed out'))
   }, milliseconds)
   const abort = () => stopped.reject(signal.reason)
   signal.addEventListener('abort', abort, { once: true })

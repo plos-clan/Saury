@@ -2,7 +2,7 @@ import h from '@satorijs/element'
 import type { Channel as SatoriChannel } from '@satorijs/protocol'
 import { z } from 'zod'
 import { Fault } from '../core/model.js'
-import type { Channel, Message, Segment } from '../core/model.js'
+import type { Channel, Member, Message, Segment } from '../core/model.js'
 
 const text = z.string()
 const identifier = z.string().min(1)
@@ -105,4 +105,9 @@ export function messageResource(message: Message, account: string) {
   }
   if (message.channel.kind === 'direct') return resource
   return { ...resource, guild: { id: message.channel.id } }
+}
+
+export function memberResource(member: Member) {
+  const { user, name, joinedAt } = member
+  return { user, name, joined_at: joinedAt }
 }

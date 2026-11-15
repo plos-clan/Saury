@@ -89,6 +89,15 @@ export type SendElement =
     }>
   }>
 
+type MediaDownload = Readonly<{
+  msgId: string
+  peerUid: string
+  chatType: number
+  elementId: string
+  downloadType: number
+  thumbSize: number
+}>
+
 export interface Messages {
   addKernelMsgListener(listener: object): number
   removeKernelMsgListener(id: number): void
@@ -105,7 +114,7 @@ export interface Messages {
     ids: readonly string[],
   ): Promise<Result & { msgList: readonly RawMessage[] }>
   getRichMediaFilePathForGuild(options: object): string
-  downloadRichMedia(options: object): Promise<void>
+  downloadRichMedia(options: MediaDownload): void
   setStatus(options: object): Promise<Result>
 }
 
@@ -131,23 +140,22 @@ export interface Groups {
     errMsg: string
     result: { infos: Map<string, NativeMember> }
   }>
-  getUidByUins(uins: readonly string[]): Promise<{
-    errCode: number
-    errMsg: string
-    uids: Map<string, string>
+}
+
+export interface Identities {
+  getUid(uins: ReadonlySet<string>): Promise<{
+    uidInfo: Map<string, string>
   }>
-  getUinByUids(uids: readonly string[]): Promise<{
-    errCode: number
-    errMsg: string
-    uins: Map<string, string>
+  getUin(uids: ReadonlySet<string>): Promise<{
+    uinInfo: Map<string, string>
   }>
 }
 
 export interface Buddies {
-  getBuddyListFromCache(category: number): Promise<readonly {
-    buddyList: readonly { uid: string, uin: string, nick: string }[]
-  }[]>
-  getBuddyNick(uid: string): string
+  getBuddyListFromCache(caller: string, category: number): readonly {
+    buddyUids: readonly string[]
+  }[]
+  getBuddyNick(uids: readonly string[]): Map<string, string> | null
 }
 
 export interface NativeSession {
@@ -160,6 +168,7 @@ export interface NativeSession {
   getMsgService(): Messages | null
   getGroupService(): Groups | null
   getBuddyService(): Buddies | null
+  getUixConvertService(): Identities | null
 }
 
 export type LoginEntry = Readonly<{
@@ -178,6 +187,7 @@ export interface Login {
   addKernelLoginListener(listener: object): number
   removeKernelLoginListener(id: number): void
   initConfig(config: object): void
+  setRemerberPwd(remember: boolean): void
   connect(): void
   getLoginList(): Promise<{
     result: number

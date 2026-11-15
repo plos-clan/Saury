@@ -27,7 +27,6 @@ type Client = {
   socket: WebSocket
   identified: boolean
   deadline: number
-  identifyTimer: NodeJS.Timeout
 }
 
 export class EventStream {
@@ -81,7 +80,6 @@ export class EventStream {
   async close(): Promise<void> {
     clearInterval(this.heartbeat)
     for (const client of this.clients) {
-      clearTimeout(client.identifyTimer)
       client.socket.close(1001, 'Server is shutting down')
     }
     const force = setTimeout(() => {
@@ -120,12 +118,10 @@ export class EventStream {
   }
 
   private accept(socket: WebSocket): void {
-    const identifyTimer = setTimeout(() => socket.close(4000), 10_000)
     const client = {
       socket,
       identified: false,
       deadline: performance.now() + 10_000,
-      identifyTimer,
     }
     this.clients.add(client)
     socket.on('message', (data, binary) => {
@@ -137,18 +133,17 @@ export class EventStream {
       }
     })
     socket.on('error', () => socket.terminate())
-    socket.on('close', () => {
-      clearTimeout(identifyTimer)
-      this.clients.delete(client)
-    })
+    socket.on('close', () => this.clients.delete(client))
   }
 
   private receive(client: Client, value: unknown): void {
-    const frame = incoming.parse(value)
     const { socket } = client
+    const now = performance.now()
+    if (now > client.deadline) return socket.terminate()
+    const frame = incoming.parse(value)
     if (frame.op === Opcode.PING) {
       if (!client.identified) return socket.close(4003, 'Identify first')
-      client.deadline = performance.now() + 30_000
+      client.deadline = now + 30_000
       socket.send('{"op":2}')
       return
     }
@@ -157,9 +152,8 @@ export class EventStream {
       return socket.close(4003, 'Authentication failed')
     }
     const after = frame.body.sn
-    clearTimeout(client.identifyTimer)
     client.identified = true
-    client.deadline = performance.now() + 30_000
+    client.deadline = now + 30_000
     const login = this.login()
     const body = { logins: login ? [login] : [], proxy_urls: [] }
     socket.send(JSON.stringify({ op: Opcode.READY, body }))

@@ -18,17 +18,13 @@ export async function inspect(qq: string): Promise<Metadata> {
   let appid: string | undefined
   let qua: string | undefined
 
-  try {
-    for await (const chunk of stream) {
-      const bytes = chunk as Buffer
-      const buffer = Buffer.concat([tail, bytes])
-      appid ??= find(buffer, 'QQAppId/', /^QQAppId\/(\d+)\0/)
-      qua ??= find(buffer, 'V1_LNX_NQ_', /^(V1_LNX_NQ_[\d._]+_GW_B)/)
-      if (appid && qua) return metadata.parse({ appid, qua })
-      tail = buffer.subarray(-128)
-    }
-  } finally {
-    stream.destroy()
+  for await (const chunk of stream) {
+    const bytes = chunk as Buffer
+    const buffer = Buffer.concat([tail, bytes])
+    appid ??= find(buffer, 'QQAppId/', /^QQAppId\/(\d+)\0/)
+    qua ??= find(buffer, 'V1_LNX_NQ_', /^(V1_LNX_NQ_[\d._]+_GW_B)/)
+    if (appid && qua) return metadata.parse({ appid, qua })
+    tail = buffer.subarray(-128)
   }
 
   throw new Error('QQ major.node contains no valid Linux app metadata')

@@ -41,8 +41,8 @@ export type Account =
   | Readonly<{ status: 'online', user: User }>
 
 export type BotEvent =
-  | Readonly<{ type: 'account-added', account: Account }>
-  | Readonly<{ type: 'account-updated', account: Account }>
+  | Readonly<{ type: 'account-added' }>
+  | Readonly<{ type: 'account-updated' }>
   | Readonly<{ type: 'message', message: Message }>
   | Readonly<{
     type: 'delete'
@@ -71,10 +71,10 @@ export interface Resources {
 
 export interface MediaFile extends AsyncDisposable {
   readonly path: string
+  readonly size: number
 }
 
 export interface AssetFile extends MediaFile {
-  readonly size: number
   readonly type: string
 }
 

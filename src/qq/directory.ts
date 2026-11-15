@@ -2,7 +2,9 @@ import { LRUCache } from 'lru-cache'
 import { bounded } from '../core/operation.js'
 import { Fault } from '../core/model.js'
 import type { Group, Member, User } from '../core/model.js'
-import type { Buddies, Groups, Identity, NativeGroup } from './native.js'
+import type {
+  Buddies, Groups, Identities, Identity, NativeGroup,
+} from './native.js'
 import { uid, uin } from './native.js'
 
 const ignore = () => {}
@@ -18,6 +20,7 @@ export class Directory {
   constructor(
     private readonly service: Groups,
     private readonly buddies: Buddies,
+    private readonly identities: Identities,
     private readonly self: Identity,
     private readonly signal: AbortSignal,
     private readonly timeout: number,
@@ -48,10 +51,10 @@ export class Directory {
   async uid(id: string): Promise<string> {
     const cached = this.uids.get(id)
     if (cached) return cached
-    const operation = this.service.getUidByUins([uin.parse(id)])
+    const operation = this.identities.getUid(new Set([uin.parse(id)]))
     const result = await bounded(operation, this.signal, this.timeout)
-    const value = result.uids.get(id)
-    if (result.errCode !== 0 || !value) {
+    const value = result.uidInfo.get(id)
+    if (!value) {
       throw new Fault('missing', 'QQ user identity was not found')
     }
     this.uids.set(id, uid.parse(value))
@@ -62,10 +65,10 @@ export class Directory {
   async resolveUin(value: string): Promise<string> {
     const cached = this.uins.get(value)
     if (cached) return cached
-    const operation = this.service.getUinByUids([uid.parse(value)])
+    const operation = this.identities.getUin(new Set([uid.parse(value)]))
     const result = await bounded(operation, this.signal, this.timeout)
-    const id = result.uins.get(value)
-    if (result.errCode !== 0 || !id) {
+    const id = result.uinInfo.get(value)
+    if (!id || id === '0') {
       throw new Fault('missing', 'QQ user number was not found')
     }
     this.uins.set(value, uin.parse(id))
@@ -77,19 +80,18 @@ export class Directory {
     uin.parse(id)
     if (id === this.self.uin) return portrait(id, this.self.nick)
     const native = await this.uid(id)
-    const name = this.buddies.getBuddyNick(native) || id
+    const names = this.buddies.getBuddyNick([native])
+    const name = names?.get(native) || id
     return portrait(id, name)
   }
 
   async friends(): Promise<readonly User[]> {
-    const operation = this.buddies.getBuddyListFromCache(0)
-    const categories = await bounded(operation, this.signal, this.timeout)
-    const entries = categories.flatMap(category => category.buddyList)
-    return Promise.all(entries.map(async entry => {
-      const id = entry.uin || await this.resolveUin(entry.uid)
-      this.uids.set(id, entry.uid)
-      this.uins.set(entry.uid, id)
-      return portrait(id, this.buddies.getBuddyNick(entry.uid) || id)
+    const categories = this.buddies.getBuddyListFromCache('saury', 0)
+    const uids = categories.flatMap(category => category.buddyUids)
+    const names = this.buddies.getBuddyNick(uids)
+    return Promise.all(uids.map(async uid => {
+      const id = await this.resolveUin(uid)
+      return portrait(id, names?.get(uid) || id)
     }))
   }
 
@@ -104,10 +106,11 @@ export class Directory {
   }
 
   async members(group: string): Promise<readonly Member[]> {
-    const operation = this.service.getAllMemberList(uin.parse(group), false)
+    const operation = this.service.getAllMemberList(uin.parse(group), true)
     const result = await bounded(operation, this.signal, this.timeout)
     if (result.errCode !== 0) {
-      throw new Fault('unavailable', 'QQ group member lookup failed')
+      const reason = result.errMsg || 'QQ group member lookup failed'
+      throw new Fault('unavailable', reason)
     }
     return [...result.result.infos.values()].map(member => {
       const id = uin.parse(member.uin)

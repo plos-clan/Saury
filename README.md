@@ -35,8 +35,6 @@ podman run -d --name saury --userns=keep-id \
 podman logs -f saury
 ```
 
-使用手机 QQ 扫码登录。登录成功后，状态会保存在数据卷中，后续重启无需重复扫码。
-
 ### 3. 接入机器人框架
 
 在 Koishi（`@koishijs/plugin-adapter-satori`）或 NoneBot（`nonebot-adapter-satori`）中配置以下连接信息：

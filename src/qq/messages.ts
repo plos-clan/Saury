@@ -9,7 +9,7 @@ import type {
 } from '../core/model.js'
 import { Fault } from '../core/model.js'
 import { bounded } from '../core/operation.js'
-import { Directory, portrait } from './directory.js'
+import { portrait } from './directory.js'
 import { uin } from './native.js'
 import type {
   Identity, Messages, Native, Peer, Picture, RawElement,
@@ -18,6 +18,12 @@ import type {
 
 type Confirmation = ReturnType<typeof Promise.withResolvers<RawMessage>>
 
+interface Contacts {
+  uid(id: string): Promise<string>
+  resolveUin(uid: string): Promise<string>
+  user(id: string): Promise<User>
+}
+
 export class Messenger {
   private readonly pending = new Map<string, Confirmation>()
   private lastTime = 0
@@ -25,7 +31,7 @@ export class Messenger {
   constructor(
     private readonly service: Messages,
     private readonly util: Native['NodeQQNTWrapperUtil'],
-    private readonly directory: Directory,
+    private readonly directory: Contacts,
     private readonly resources: Resources,
     private readonly self: Identity,
     private readonly root: string,
@@ -185,10 +191,8 @@ export class Messenger {
 
   private async image(source: string): Promise<SendElement> {
     await using file = await this.resources.prepare(source, this.signal)
-    const { path } = file
-    const [size, dimensions] = await Promise.all([
-      stat(path), imageSizeFromFile(path),
-    ])
+    const { path, size } = file
+    const dimensions = await imageSizeFromFile(path)
     const digest = createHash('md5')
     const input = createReadStream(path, { signal: this.signal })
     for await (const chunk of input) digest.update(chunk)
@@ -212,7 +216,7 @@ export class Messenger {
       md5HexStr,
       fileName,
       sourcePath,
-      fileSize: `${size.size}`,
+      fileSize: `${size}`,
       picWidth: dimensions.width,
       picHeight: dimensions.height,
       original: true,
@@ -271,7 +275,8 @@ export class Messenger {
     if (picture.picUrl) return { type: 'image', source: picture.picUrl }
     const request = {
       msgId: message.msgId,
-      elemId: element.elementId,
+      peerUid: message.peerUid,
+      elementId: element.elementId,
       chatType: message.chatType,
       downloadType: 1,
       thumbSize: 0,
@@ -279,8 +284,7 @@ export class Messenger {
     const source = this.resources.publish(async () => {
       const path = await this.picturePath(picture)
       if (path) return path
-      const operation = this.service.downloadRichMedia(request)
-      await bounded(operation, this.signal, this.timeout)
+      this.service.downloadRichMedia(request)
       return this.waitForImage(picture)
     })
     return { type: 'image', source }

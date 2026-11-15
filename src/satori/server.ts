@@ -5,14 +5,14 @@ import { Readable } from 'node:stream'
 import { getRequestListener } from '@hono/node-server'
 import { Hono } from 'hono'
 import { bodyLimit } from 'hono/body-limit'
-import type { Context } from 'hono'
+import type { Context, Env } from 'hono'
 import type { Logger } from 'pino'
 import { ZodError } from 'zod'
 import type { Config } from '../config.js'
 import { Fault } from '../core/model.js'
 import type { Assets, Bot } from '../core/model.js'
 import { SatoriApi } from './api.js'
-import { assetSource, assetUrl } from './codec.js'
+import { assetUrl } from './codec.js'
 import { EventStream } from './events.js'
 
 const statusCodes = {
@@ -23,6 +23,8 @@ const statusCodes = {
   timeout: 504,
   unavailable: 502,
 } as const
+
+const mediaPath = '/v1/internal/:platform/:user/media/:id'
 
 export async function serve(
   config: Config,
@@ -61,7 +63,7 @@ export async function serve(
     const login = api.login()
     return context.json({ logins: login ? [login] : [], proxy_urls: [] })
   })
-  app.get('/v1/proxy/*', context => proxy(context, api, resources))
+  app.get(mediaPath, context => media(context, api, resources))
   app.post('/v1/:action', async context => {
     const platform = context.req.header('satori-platform')
     const account = context.req.header('satori-user-id')
@@ -118,35 +120,34 @@ async function upload(
 ) {
   const account = api.account()
   const form = await context.req.formData()
-  const results = new Map<string, string>()
+  const results: string[] = []
   const cancellation = AbortSignal.any([signal, context.req.raw.signal])
-  for (const [name, value] of form) {
+  for (const value of form.values()) {
     if (typeof value === 'string') {
       throw new Fault('input', 'Uploads must contain files')
     }
-    if (!name || results.has(name)) {
-      throw new Fault('input', 'Upload names must be unique')
-    }
     const type = value.type || 'application/octet-stream'
     const source = await resources.upload(value.stream(), type, cancellation)
-    results.set(name, assetUrl(source, account))
+    results.push(assetUrl(source, account))
   }
-  return context.json(Object.fromEntries(results))
+  return context.json(results)
 }
 
-async function proxy(context: Context, api: SatoriApi, resources: Assets) {
-  const encoded = context.req.path.slice('/v1/proxy/'.length)
-  const url = decodeURIComponent(encoded)
+async function media(
+  context: Context<Env, typeof mediaPath>,
+  api: SatoriApi,
+  resources: Assets,
+) {
   const login = api.login()
   if (!login?.user || !login.platform) {
     throw new Fault('offline', 'Account is not available')
   }
-  const account = `${login.platform}/${login.user.id}`
-  const source = assetSource(url, account)
-  if (!source.startsWith('asset:')) {
-    throw new Fault('input', 'Only local Saury resources can be proxied')
+  const { platform, user } = context.req.param()
+  if (platform !== login.platform || user !== login.user.id) {
+    throw new Fault('input', 'Resource belongs to another account')
   }
-  const asset = await resources.acquire(source.slice(6))
+  const id = context.req.param('id')
+  const asset = await resources.acquire(id)
   const input = createReadStream(asset.path)
   input.once('close', () => {
     Promise.resolve(asset[Symbol.asyncDispose]()).catch(() => input.destroy())

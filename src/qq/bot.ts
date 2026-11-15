@@ -31,7 +31,7 @@ export class QqBot implements Bot {
   private state: State = { status: 'connecting' }
   private readonly lifetime = new AsyncDisposableStack()
   private readonly events = new EventEmitter<{ event: [BotEvent] }>()
-  private readonly seen: LRUCache<string, true>
+  private readonly seen: LRUCache<string, 'message' | 'deleted'>
   private queued = Promise.resolve()
 
   constructor(
@@ -66,13 +66,15 @@ export class QqBot implements Bot {
     const messages = host.session.getMsgService()
     const groups = host.session.getGroupService()
     const buddies = host.session.getBuddyService()
-    if (!messages || !groups || !buddies) {
+    const identities = host.session.getUixConvertService()
+    if (!messages || !groups || !buddies || !identities) {
       throw new Error('QQ did not initialize the required services')
     }
 
     const { signal, config } = this
     const directory = new Directory(
-      groups, buddies, self, signal, config.timeout, config.cacheEntries,
+      groups, buddies, identities, self, signal,
+      config.timeout, config.cacheEntries,
     )
     this.lifetime.defer(() => directory.close())
     const util = host.native.NodeQQNTWrapperUtil
@@ -110,7 +112,7 @@ export class QqBot implements Bot {
     if (result.result !== 0) throw new Error('QQ online registration failed')
     const user = portrait(self.uin, self.nick)
     this.state = { status: 'online', live: { user, messenger, directory } }
-    this.events.emit('event', { type: 'account-added', account: this.account })
+    this.events.emit('event', { type: 'account-added' })
     this.logger.info('QQ account is online')
   }
 
@@ -164,8 +166,7 @@ export class QqBot implements Bot {
     const status = online ? 'online' : 'offline'
     if (this.state.status === status) return
     this.state = { status, live: this.state.live }
-    const account = this.account
-    this.events.emit('event', { type: 'account-updated', account })
+    this.events.emit('event', { type: 'account-updated' })
   }
 
   private enqueue(list: readonly RawMessage[]): void {
@@ -183,23 +184,25 @@ export class QqBot implements Bot {
     if (this.state.status !== 'online') return
     const { messenger } = this.state.live
     const key = `${raw.chatType}:${raw.peerUid}:${raw.msgId}`
+    const previous = this.seen.get(key)
     const revoked = raw.elements.find(element => {
       return element.grayTipElement?.revokeElement != null
     })
     if (revoked) {
-      if (!this.seen.has(key)) return
+      if (previous !== 'message') return
       const id = raw.msgId
       const channel = await messenger.channel(raw)
       const timestamp = Number(raw.msgTime) * 1000
+      this.seen.set(key, 'deleted')
       this.events.emit('event', { type: 'delete', channel, id, timestamp })
       return
     }
 
-    if (this.seen.has(key)) return
+    if (previous) return
     if (raw.chatType !== 1 && raw.chatType !== 2) return
     const message = await messenger.decode(raw)
     if (!message.content.length) return
-    this.seen.set(key, true)
+    this.seen.set(key, 'message')
     this.events.emit('event', { type: 'message', message })
   }
 }

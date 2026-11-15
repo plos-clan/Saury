@@ -3,7 +3,7 @@ import { z } from 'zod'
 import { Fault } from '../core/model.js'
 import type { Bot } from '../core/model.js'
 import {
-  channelResource, decode, messageResource, parseChannel,
+  channelResource, decode, memberResource, messageResource, parseChannel,
 } from './codec.js'
 
 const id = z.string().min(1)
@@ -108,18 +108,14 @@ export class SatoriApi {
 
   private async members(input: z.infer<typeof guildPage>) {
     const members = await this.bot.members(input.guild_id)
-    const data = members.map(member => {
-      const { user, name, joinedAt } = member
-      return { user, name, joined_at: joinedAt }
-    })
-    return { data }
+    return { data: members.map(memberResource) }
   }
 
   private async member(input: z.infer<typeof member>) {
-    const members = await this.members({ guild_id: input.guild_id })
-    const member = members.data.find(member => member.user.id === input.user_id)
+    const members = await this.bot.members(input.guild_id)
+    const member = members.find(member => member.user.id === input.user_id)
     if (!member) throw new Fault('missing', 'Group member was not found')
-    return member
+    return memberResource(member)
   }
 
   private async channel(value: string) {
