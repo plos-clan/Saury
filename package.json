@@ -1,0 +1,35 @@
+{
+  "name": "saury",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A small Linux QQ to Satori gateway",
+  "license": "0BSD",
+  "packageManager": "pnpm@12.21.0",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "build": "tsc && make -C src/native",
+    "check": "tsc --noEmit",
+    "start": "./src/saury.sh"
+  },
+  "dependencies": {
+    "@hono/node-server": "^2.1.8",
+    "@satorijs/element": "^3.2.0",
+    "hono": "^4.13.18",
+    "image-size": "^2.1.0",
+    "lru-cache": "^11.5.3",
+    "pino": "^10.4.0",
+    "tar": "^7.5.23",
+    "uqr": "^0.1.3",
+    "ws": "^8.23.0",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@satorijs/protocol": "^1.7.0",
+    "@types/node": "^26.6.6",
+    "@types/ws": "^8.18.2",
+    "typescript": "~7.0.2"
+  }
+}
