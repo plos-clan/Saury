@@ -10,4 +10,4 @@ preload="$root/dist/saury.so:libgnutls.so.30"
 
 exec flock --nonblock --no-fork "$data/instance.lock" \
   env SAURY_DATA="$data" LD_PRELOAD="$preload" \
-  node "$root/dist/main.js" "$@"
+  node --optimize-for-size "$root/dist/main.js" "$@"
