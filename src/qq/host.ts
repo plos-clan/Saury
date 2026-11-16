@@ -1,14 +1,13 @@
 import { mkdir, unlink, writeFile } from 'node:fs/promises'
 import { hostname, release, version } from 'node:os'
 import { join } from 'node:path'
-import { setTimeout as delay } from 'node:timers/promises'
 import type { Logger } from 'pino'
 import { renderUnicodeCompact } from 'uqr'
 import type { Config } from '../config.js'
 import { bounded } from '../core/operation.js'
 import { Fault } from '../core/model.js'
 import type { Metadata } from './metadata.js'
-import { identity, loadNative } from './native.js'
+import { identity, loadQqNative } from './native.js'
 import type { Identity, Native, NativeSession, QrCode } from './native.js'
 import { sessionSettings } from './settings.js'
 import { provision } from './resource.js'
@@ -31,7 +30,6 @@ export class NativeHost {
     private readonly logger: Logger,
     private readonly signal: AbortSignal,
     private readonly disconnected: () => void,
-    private readonly reconnected: () => void,
   ) {
     const misc = native.NodeIO3MiscService.get()
     misc.addO3MiscListener({ getOnAmgomDataPiece: ignore })
@@ -48,7 +46,6 @@ export class NativeHost {
     logger: Logger,
     signal: AbortSignal,
     disconnected: () => void,
-    reconnected: () => void,
   ): Promise<NativeHost> {
     if (process.platform !== 'linux') {
       throw new Error('Saury requires Linux')
@@ -67,14 +64,13 @@ export class NativeHost {
     process.chdir(config.session)
 
     signal.throwIfAborted()
-    const native = loadNative(join(resource.path, 'wrapper.node'))
+    const native = loadQqNative(join(resource.path, 'wrapper.node'))
     return new NativeHost(
-      native, resource.metadata, config, logger, signal,
-      disconnected, reconnected,
+      native, resource.metadata, config, logger, signal, disconnected,
     )
   }
 
-  async connect(): Promise<Identity> {
+  async connect(attach: (self: Identity) => Promise<void>): Promise<void> {
     const commonPath = join(this.config.session, 'nt_qq', 'global')
     const settings = {
       machineId: '',
@@ -89,12 +85,10 @@ export class NativeHost {
     this.login.setRemerberPwd(true)
     this.login.connect()
     await bounded(this.connected.promise, this.signal, this.config.timeout)
-    await delay(3000, undefined, { signal: this.signal })
     const self = await this.authenticate()
-    await this.activate(self, commonPath)
+    await this.activate(self, commonPath, attach)
     const qr = join(this.config.session, 'qrcode.png')
     await unlink(qr).catch(ignore)
-    return self
   }
 
   close(): void {
@@ -133,19 +127,14 @@ export class NativeHost {
 
   private callbacks() {
     return {
-      onLoginConnected: () => {
-        this.connected.resolve()
-        this.reconnected()
-      },
+      onLoginConnected: this.connected.resolve,
       onLoginDisConnected: this.disconnected,
       onLoginConnecting: ignore,
       onQRCodeLoginPollingStarted: ignore,
       onQRCodeSessionUserScaned: ignore,
       onQRCodeSessionQuickLoginFailed: ignore,
       onQRCodeGetPicture: (qr: QrCode) => {
-        this.saveQr(qr).catch(error => {
-          this.authenticated.reject(error)
-        })
+        this.saveQr(qr).catch(this.authenticated.reject)
       },
       onQRCodeLoginSucceed: (value: unknown) => {
         const parsed = identity.safeParse(value)
@@ -209,10 +198,26 @@ export class NativeHost {
     return self
   }
 
-  private async activate(self: Identity, directory: string): Promise<void> {
+  private async activate(
+    self: Identity,
+    directory: string,
+    attach: (self: Identity) => Promise<void>,
+  ): Promise<void> {
     const ready = Promise.withResolvers<void>()
     const guid = this.login.getMachineGuid()
     const settings = sessionSettings(this.metadata, self, directory, guid)
+    const initialized = (result: number, reason: string) => {
+      if (result !== 0) {
+        const message = `QQ session failed (${result}): ${reason}`
+        return ready.reject(new Error(message))
+      }
+      try {
+        this.signal.throwIfAborted()
+        ready.resolve(attach(self))
+      } catch (error) {
+        ready.reject(error)
+      }
+    }
     const depends = {
       onMSFStatusChange: ignore,
       onMSFSsoError: ignore,
@@ -228,22 +233,12 @@ export class NativeHost {
       onGProSessionCreate: ignore,
       onUserOnlineResult: ignore,
       onGetSelfTinyId: ignore,
-      onSessionInitComplete: (result: number) => {
-        if (result === 0) ready.resolve()
-      },
-      onOpentelemetryInit: (info: { is_init: boolean }) => {
-        if (info.is_init) ready.resolve()
-      },
+      onSessionInitComplete: initialized,
+      onOpentelemetryInit: ignore,
     }
     this.session.init(settings, depends, dispatcher, listener)
-    this.startup.start()
+    const result = this.startup.start()
+    if (result !== 0) throw new Error(`QQ startup failed (${result})`)
     await bounded(ready.promise, this.signal, this.config.timeout)
-    const deadline = performance.now() + this.config.timeout
-    while (!this.session.getMsgService()) {
-      if (performance.now() >= deadline) {
-        throw new Fault('timeout', 'QQ message service did not become ready')
-      }
-      await delay(50, undefined, { signal: this.signal })
-    }
   }
 }

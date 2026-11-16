@@ -3,7 +3,6 @@ import { join } from 'node:path'
 import { LRUCache } from 'lru-cache'
 import type { Logger } from 'pino'
 import type { Config } from '../config.js'
-import { bounded } from '../core/operation.js'
 import { Fault } from '../core/model.js'
 import type {
   Account, Bot, BotEvent, Channel, Message, Resources, Segment, User,
@@ -11,7 +10,7 @@ import type {
 import { Directory, portrait } from './directory.js'
 import { NativeHost } from './host.js'
 import { Messenger } from './messages.js'
-import type { RawMessage } from './native.js'
+import type { Identity, RawMessage } from './native.js'
 
 type Live = Readonly<{
   user: User
@@ -57,63 +56,11 @@ export class QqBot implements Bot {
 
   async connect(): Promise<void> {
     const offline = () => this.connection(false)
-    const online = () => this.connection(true)
     const host = await NativeHost.open(
-      this.config, this.logger, this.signal, offline, online,
+      this.config, this.logger, this.signal, offline,
     )
     this.lifetime.defer(() => host.close())
-    const self = await host.connect()
-    const messages = host.session.getMsgService()
-    const groups = host.session.getGroupService()
-    const buddies = host.session.getBuddyService()
-    const identities = host.session.getUixConvertService()
-    if (!messages || !groups || !buddies || !identities) {
-      throw new Error('QQ did not initialize the required services')
-    }
-
-    const { signal, config } = this
-    const directory = new Directory(
-      groups, buddies, identities, self, signal,
-      config.timeout, config.cacheEntries,
-    )
-    this.lifetime.defer(() => directory.close())
-    const util = host.native.NodeQQNTWrapperUtil
-    const root = join(config.session, 'nt_qq', 'global')
-    const messenger = new Messenger(
-      messages, util, directory, this.resources, self,
-      root, signal, config.timeout,
-    )
-    const listener = {
-      onRecvMsg: (list: readonly RawMessage[]) => this.enqueue(list),
-      onMsgInfoListUpdate: (list: readonly RawMessage[]) => {
-        messenger.confirm(list)
-        const complete = list.filter(message => {
-          return message.sendStatus === 2 || message.sendStatus === 3
-        })
-        this.enqueue(complete)
-      },
-      onRecvMsgReadReport: ignore,
-      onRecvMsgReceipt: ignore,
-      onRecvOfflineFileMsg: ignore,
-      onFileMsgCome: ignore,
-      onRecvOnlineFileMsg: ignore,
-      onRecvSysMsg: ignore,
-    }
-    const id = messages.addKernelMsgListener(listener)
-    this.lifetime.defer(() => messages.removeKernelMsgListener(id))
-    const status = {
-      status: 10,
-      extStatus: 0,
-      batteryStatus: 0,
-      customStatus: { faceId: '', wording: '', faceType: '1' },
-    }
-    const registered = messages.setStatus(status)
-    const result = await bounded(registered, signal, config.timeout)
-    if (result.result !== 0) throw new Error('QQ online registration failed')
-    const user = portrait(self.uin, self.nick)
-    this.state = { status: 'online', live: { user, messenger, directory } }
-    this.events.emit('event', { type: 'account-added' })
-    this.logger.info('QQ account is online')
+    await host.connect(self => this.attach(host, self))
   }
 
   send(channel: Channel, content: readonly Segment[]): Promise<Message> {
@@ -153,6 +100,56 @@ export class QqBot implements Bot {
     this.state = { status: 'offline' }
   }
 
+  private attach(host: NativeHost, self: Identity): Promise<void> {
+    const messages = host.session.getMsgService()
+    const groups = host.session.getGroupService()
+    const buddies = host.session.getBuddyService()
+    const identities = host.session.getUixConvertService()
+    if (!messages || !groups || !buddies || !identities) {
+      throw new Error('QQ did not initialize the required services')
+    }
+
+    const { signal, config } = this
+    const directory = new Directory(
+      groups, buddies, identities, self, signal,
+      config.timeout, config.cacheEntries,
+    )
+    this.lifetime.defer(() => directory.close())
+    const util = host.native.NodeQQNTWrapperUtil
+    const root = join(config.session, 'nt_qq', 'global')
+    const messenger = new Messenger(
+      messages, util, directory, this.resources, self,
+      root, signal, config.timeout,
+    )
+    const connected = Promise.withResolvers<void>()
+    const listener = {
+      onUserOnlineStatusChanged: (online: boolean) => {
+        this.connection(online)
+        if (online) connected.resolve()
+      },
+      onRecvMsg: (list: readonly RawMessage[]) => this.enqueue(list),
+      onMsgInfoListUpdate: (list: readonly RawMessage[]) => {
+        messenger.confirm(list)
+        const complete = list.filter(message => {
+          return message.sendStatus === 2 || message.sendStatus === 3
+        })
+        this.enqueue(complete)
+      },
+      onRecvMsgReadReport: ignore,
+      onRecvMsgReceipt: ignore,
+      onRecvOfflineFileMsg: ignore,
+      onFileMsgCome: ignore,
+      onRecvOnlineFileMsg: ignore,
+      onRecvSysMsg: ignore,
+    }
+    const user = portrait(self.uin, self.nick)
+    this.state = { status: 'offline', live: { user, messenger, directory } }
+    this.events.emit('event', { type: 'account-added' })
+    const id = messages.addKernelMsgListener(listener)
+    this.lifetime.defer(() => messages.removeKernelMsgListener(id))
+    return connected.promise
+  }
+
   private ready(): Live {
     this.signal.throwIfAborted()
     if (this.state.status !== 'online') {
@@ -167,6 +164,7 @@ export class QqBot implements Bot {
     if (this.state.status === status) return
     this.state = { status, live: this.state.live }
     this.events.emit('event', { type: 'account-updated' })
+    if (online) this.logger.info('QQ account is online')
   }
 
   private enqueue(list: readonly RawMessage[]): void {

@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url'
 import { z } from 'zod'
 
 export const uin = z.string().regex(/^[1-9]\d*$/)
@@ -115,7 +116,6 @@ export interface Messages {
   ): Promise<Result & { msgList: readonly RawMessage[] }>
   getRichMediaFilePathForGuild(options: object): string
   downloadRichMedia(options: MediaDownload): void
-  setStatus(options: object): Promise<Result>
 }
 
 export type NativeGroup = Readonly<{
@@ -206,7 +206,7 @@ export interface Native {
     get(): { addO3MiscListener(listener: object): number }
   }
   NodeIQQNTStartupSessionWrapper: {
-    create(): { start(): void, stop(): void }
+    create(): { start(): number, stop(): void }
   }
   NodeIQQNTWrapperSession: {
     getNTWrapperSession(name: string): NativeSession
@@ -220,9 +220,11 @@ export interface Native {
   }
 }
 
-export function loadNative(path: string): Native {
+export function loadQqNative(wrapperPath: string): Native {
   const module = { exports: {} as Record<string, unknown> }
-  process.dlopen(module, path)
+  const stub = new URL('../saury.so', import.meta.url)
+  process.dlopen(module, fileURLToPath(stub))
+  process.dlopen(module, wrapperPath)
   const factories = {
     NodeIO3MiscService: 'get',
     NodeIQQNTStartupSessionWrapper: 'create',
